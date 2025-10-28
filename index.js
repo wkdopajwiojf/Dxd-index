@@ -1,32 +1,65 @@
-// ✅ Discord ↔ Roblox Relay Bot (index.js) // ต้องใช้: express, discord.js v14+, dotenv
+// index.js
+import express from "express";
+import { Client, GatewayIntentBits } from "discord.js";
+import bodyParser from "body-parser";
+import cors from "cors";
 
-import express from 'express'; import { Client, GatewayIntentBits, Partials } from 'discord.js'; import bodyParser from 'body-parser'; import dotenv from 'dotenv';
+const PORT = process.env.PORT || 10000;
+const RELAY_KEY = "222554";
+const DISCORD_BOT_TOKEN = "MTQzMjc4NjY3Mjc1MTM0OTg5Mg.GUrdy_.qhJvoF3e2lR_9V45URltiC6QHbjjB717CKdQ0k"; // 🔥 อย่าลืมใส่
 
-dotenv.config();
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
 
-const app = express(); const PORT = process.env.PORT || 10000; const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN; const RELAY_KEY = process.env.RELAY_KEY || '222554'; const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID; // ช่องที่จะ relay ไปหา
-
+const app = express();
+app.use(cors());
 app.use(bodyParser.json());
 
-// 🚀 Discord Bot Setup const client = new Client({ intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent ], partials: [Partials.Channel] });
+// 🌐 Endpoint ที่ Roblox จะดึงข้อความจาก Discord
+let latestMessage = "ยังไม่มีข้อความจาก Discord";
 
-client.on('ready', () => { console.log(✅ Logged in as ${client.user.tag}); });
+app.get("/from-discord", (req, res) => {
+  const key = req.headers["x-relay-key"];
+  if (key !== RELAY_KEY) {
+    return res.status(403).json({ error: "invalid key" });
+  }
+  res.json({ message: latestMessage });
+});
 
-// 🌐 รับข้อความจาก Roblox app.post('/from-roblox', async (req, res) => { const key = req.headers['x-relay-key']; if (key !== RELAY_KEY) { return res.status(403).json({ error: 'invalid key' }); }
+// 📩 Endpoint ที่ Roblox ส่งข้อความมาให้ Discord
+app.post("/to-discord", (req, res) => {
+  const key = req.headers["x-relay-key"];
+  if (key !== RELAY_KEY) {
+    return res.status(403).json({ error: "invalid key" });
+  }
 
-const { author, message } = req.body; if (!author || !message) { return res.status(400).json({ error: 'missing author or message' }); }
+  const { username, text } = req.body;
+  const channel = client.channels.cache.find((c) => c.name === "relay-chat");
 
-try { const channel = await client.channels.fetch(CHANNEL_ID); if (!channel || !channel.isTextBased()) { return res.status(500).json({ error: 'channel not found or not text-based' }); }
+  if (channel && channel.isTextBased()) {
+    channel.send(`💬 **${username}**: ${text}`);
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: "relay-chat channel not found" });
+  }
+});
 
-await channel.send(`📦 **${author}**: ${message}`);
-res.json({ success: true });
+client.on("messageCreate", (msg) => {
+  if (msg.author.bot || msg.channel.name !== "relay-chat") return;
+  latestMessage = `${msg.author.username}: ${msg.content}`;
+});
 
-} catch (err) { console.error('Error sending message to Discord:', err); res.status(500).json({ error: 'failed to send message' }); } });
-
-// 🌐 ส่งข้อความกลับไปหา Roblox (จาก Discord) app.post('/from-discord', (req, res) => { const key = req.headers['x-relay-key']; if (key !== RELAY_KEY) { return res.status(403).json({ error: 'invalid key' }); }
-
-const { author, message } = req.body; console.log(💬 ข้อความจาก Discord ไป Roblox แล้ว: ${author}: ${message}); // ที่นี่สามารถ broadcast ไปยัง WebSocket หรือ queue ตามระบบที่ตั้งไว้ res.json({ received: true }); });
-
-// ✅ Start Express Server app.listen(PORT, () => { console.log(🌐 Listening on http://localhost:${PORT}); });
+client.once("ready", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+});
 
 client.login(DISCORD_BOT_TOKEN);
+
+app.listen(PORT, () =>
+  console.log(`🚀 Server ready on http://localhost:${PORT}`)
+);
