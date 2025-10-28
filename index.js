@@ -1,65 +1,50 @@
-// index.js
 import express from "express";
-import { Client, GatewayIntentBits } from "discord.js";
-import bodyParser from "body-parser";
-import cors from "cors";
-
-const PORT = process.env.PORT || 10000;
-const RELAY_KEY = "222554";
-const DISCORD_BOT_TOKEN = "MTQzMjc4NjY3Mjc1MTM0OTg5Mg.GUrdy_.qhJvoF3e2lR_9V45URltiC6QHbjjB717CKdQ0k"; // 🔥 อย่าลืมใส่
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
+import fetch from "node-fetch";
 
 const app = express();
-app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// 🌐 Endpoint ที่ Roblox จะดึงข้อความจาก Discord
-let latestMessage = "ยังไม่มีข้อความจาก Discord";
+// --- CONFIG ---
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+const SHARED_SECRET = process.env.SHARED_SECRET || "my_secret";
 
-app.get("/from-discord", (req, res) => {
-  const key = req.headers["x-relay-key"];
-  if (key !== RELAY_KEY) {
-    return res.status(403).json({ error: "invalid key" });
-  }
-  res.json({ message: latestMessage });
+let pending = [];
+
+// verify key
+function verifyKey(req, res, next) {
+  const k = req.header("x-relay-key");
+  if (k !== SHARED_SECRET) return res.status(403).json({error:"forbidden"});
+  next();
+}
+
+// Roblox → Discord
+app.post("/to-discord", verifyKey, async (req,res)=>{
+  const {author,text}=req.body;
+  const payload={content:`🎮 **${author}**: ${text}`};
+  await fetch(DISCORD_WEBHOOK_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+  res.json({ok:true});
 });
 
-// 📩 Endpoint ที่ Roblox ส่งข้อความมาให้ Discord
-app.post("/to-discord", (req, res) => {
-  const key = req.headers["x-relay-key"];
-  if (key !== RELAY_KEY) {
-    return res.status(403).json({ error: "invalid key" });
-  }
-
-  const { username, text } = req.body;
-  const channel = client.channels.cache.find((c) => c.name === "relay-chat");
-
-  if (channel && channel.isTextBased()) {
-    channel.send(`💬 **${username}**: ${text}`);
-    res.json({ success: true });
-  } else {
-    res.status(500).json({ error: "relay-chat channel not found" });
-  }
+// Discord → Roblox
+app.post("/from-discord", verifyKey,(req,res)=>{
+  const {author,text}=req.body;
+  pending.push({author,text});
+  res.json({ok:true});
 });
 
-client.on("messageCreate", (msg) => {
-  if (msg.author.bot || msg.channel.name !== "relay-chat") return;
-  latestMessage = `${msg.author.username}: ${msg.content}`;
+// Roblox polling
+app.get("/messages",verifyKey,(req,res)=>{
+  const out=pending;
+  pending=[];
+  res.json({ok:true,messages:out});
 });
 
-client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-});
+app.get("/",(_,res)=>res.send("Dxd relay online ✅"));
 
-client.login(DISCORD_BOT_TOKEN);
-
-app.listen(PORT, () =>
-  console.log(`🚀 Server ready on http://localhost:${PORT}`)
-);
+// สำคัญสำหรับ Render
+const PORT=process.env.PORT||10000;
+app.listen(PORT,"0.0.0.0",()=>console.log("Relay listening",PORT));
