@@ -1,148 +1,32 @@
-// index.js — รวมทั้ง Discord Bot + Express Server
-import express from "express";
-import fetch from "node-fetch";
-import { Client, GatewayIntentBits } from "discord.js";
+// ✅ Discord ↔ Roblox Relay Bot (index.js) // ต้องใช้: express, discord.js v14+, dotenv
 
-// ===== CONFIG =====
-const DISCORD_BOT_TOKEN = "MTQzMjc4NjY3Mjc1MTM0OTg5Mg.GUrdy_.qhJvoF3e2lR_9V45URltiC6QHbjjB717CKdQ0k";
-const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1432816819458019491/HkabKcQN1vPkafP4FIf-4no_BcjwHZ-A8hTQfBNHrNJD4ffBE3nv-Rhf2Vm9xNAIVd0G"; // ใช้ Webhook หรือให้ bot พิมพ์ก็ได้
-const SHARED_SECRET = "222554";
+import express from 'express'; import { Client, GatewayIntentBits, Partials } from 'discord.js'; import bodyParser from 'body-parser'; import dotenv from 'dotenv';
 
-// ===== SETUP EXPRESS SERVER =====
-const app = express();
-app.use(express.json());
+dotenv.config();
 
-// คิวข้อความรอ Roblox มาดึง
-let pendingMessagesForRoblox = [];
+const app = express(); const PORT = process.env.PORT || 10000; const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN; const RELAY_KEY = process.env.RELAY_KEY || '222554'; const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID; // ช่องที่จะ relay ไปหา
 
-// middleware auth
-function verifyKey(req, res, next) {
-  const key = req.header("x-relay-key");
-  if (!key || key !== SHARED_SECRET) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-  next();
-}
+app.use(bodyParser.json());
 
-// Roblox -> Discord
-app.post("/to-discord", verifyKey, async (req, res) => {
-  const { author, text } = req.body;
-  if (!author || !text) {
-    return res.status(400).json({ error: "missing author or text" });
-  }
+// 🚀 Discord Bot Setup const client = new Client({ intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent ], partials: [Partials.Channel] });
 
-  const payload = {
-    content: `🎮 **${author}**: ${text}`
-  };
+client.on('ready', () => { console.log(✅ Logged in as ${client.user.tag}); });
 
-  try {
-    const resp = await fetch(DISCORD_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+// 🌐 รับข้อความจาก Roblox app.post('/from-roblox', async (req, res) => { const key = req.headers['x-relay-key']; if (key !== RELAY_KEY) { return res.status(403).json({ error: 'invalid key' }); }
 
-    if (!resp.ok) {
-      const body = await resp.text();
-      console.error("Discord webhook error:", resp.status, body);
-      return res.status(500).json({ error: "discord_failed" });
-    }
+const { author, message } = req.body; if (!author || !message) { return res.status(400).json({ error: 'missing author or message' }); }
 
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error("ERR /to-discord:", err);
-    return res.status(500).json({ error: "internal" });
-  }
-});
+try { const channel = await client.channels.fetch(CHANNEL_ID); if (!channel || !channel.isTextBased()) { return res.status(500).json({ error: 'channel not found or not text-based' }); }
 
-// Discord bot -> relay
-app.post("/from-discord", verifyKey, (req, res) => {
-  const { author, text } = req.body;
-  if (!author || !text) {
-    return res.status(400).json({ error: "missing author or text" });
-  }
+await channel.send(`📦 **${author}**: ${message}`);
+res.json({ success: true });
 
-  pendingMessagesForRoblox.push({
-    author,
-    text,
-    ts: Date.now()
-  });
+} catch (err) { console.error('Error sending message to Discord:', err); res.status(500).json({ error: 'failed to send message' }); } });
 
-  return res.json({ ok: true });
-});
+// 🌐 ส่งข้อความกลับไปหา Roblox (จาก Discord) app.post('/from-discord', (req, res) => { const key = req.headers['x-relay-key']; if (key !== RELAY_KEY) { return res.status(403).json({ error: 'invalid key' }); }
 
-// Roblox -> get new messages
-app.get("/messages", verifyKey, (req, res) => {
-  const out = pendingMessagesForRoblox;
-  pendingMessagesForRoblox = [];
-  return res.json({ ok: true, messages: out });
-});
+const { author, message } = req.body; console.log(💬 ข้อความจาก Discord ไป Roblox แล้ว: ${author}: ${message}); // ที่นี่สามารถ broadcast ไปยัง WebSocket หรือ queue ตามระบบที่ตั้งไว้ res.json({ received: true }); });
 
-// test
-app.get("/", (req, res) => {
-  res.send("Relay server + bot is running 😎");
-});
+// ✅ Start Express Server app.listen(PORT, () => { console.log(🌐 Listening on http://localhost:${PORT}); });
 
-// ===== START EXPRESS =====
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("🌐 Server running on port", PORT);
-});
-
-// ===== DISCORD BOT =====
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-});
-
-client.on("ready", () => {
-  console.log(`🤖 Logged in as ${client.user.tag}`);
-});
-
-client.on("messageCreate", async (msg) => {
-  if (msg.author.bot || !msg.guild) return;
-  //if (msg.channel.name !== "relay-chat") return;
-
-  const payload = {
-    author: msg.author.username,
-    text: msg.content,
-  };
-
-  try {
-    const res = await fetch("https://dxd-index.onrender.com/from-discord", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-relay-key": SHARED_SECRET,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (res.ok) {
-      console.log("✅ ส่งข้อความจาก Discord ไป Roblox:", msg.content);
-    } else {
-      console.error("❌ ส่งไม่สำเร็จ:", await res.text());
-    }
-  } catch (err) {
-    console.error("🔥 Error:", err);
-  }
-});
-
-client.login(DISCORD_BOT_TOKEN);  if (key !== RELAY_KEY) return res.status(403).json({ error: "invalid key" });
-
-  const { author, text } = req.body;
-  if (!author || !text) return res.status(400).json({ error: "invalid payload" });
-
-  console.log(`[จาก Roblox] ${author}: ${text}`);
-  res.json({ ok: true });
-});
-
-// health check
-app.get("/", (_, res) => {
-  res.send("Relay + Bot Server is running 😎");
-});
-
-// start express + bot
-app.listen(PORT, () => {
-  console.log(`🌐 Server running on http://localhost:${PORT}`);
-  client.login(DISCORD_BOT_TOKEN);
-});
+client.login(DISCORD_BOT_TOKEN);
